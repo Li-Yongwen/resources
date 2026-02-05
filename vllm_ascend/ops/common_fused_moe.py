@@ -42,6 +42,9 @@ from vllm_ascend.utils import (ACL_FORMAT_FRACTAL_NZ, enable_sp, is_310p,
                                is_enable_nz, npu_stream_switch,
                                shared_expert_dp_enabled,
                                shared_experts_compute_stream)
+from vllm.model_executor.layers.fused_moe.routed_experts_capturer import (
+    RoutedExpertsCapturer
+)
 
 
 class AscendUnquantizedFusedMoEMethod(UnquantizedFusedMoEMethod):
@@ -126,6 +129,17 @@ class AscendUnquantizedFusedMoEMethod(UnquantizedFusedMoEMethod):
             routed_scaling_factor=routed_scaling_factor,
             e_score_correction_bias=e_score_correction_bias,
             global_num_experts=global_num_experts)
+
+        if (
+            layer.vllm_config.model_config is not None
+            and layer.vllm_config.model_config.enable_return_routed_experts
+        ):
+            capturer = RoutedExpertsCapturer.get_instance()
+            if capturer is not None:
+                capturer.capture(
+                    layer_id=layer.layer_id,
+                    topk_ids=topk_ids,
+                )
 
         topk_weights = topk_weights.to(x.dtype)
         # this is a naive implementation for experts load balance so as

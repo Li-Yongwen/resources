@@ -133,6 +133,10 @@ from vllm_ascend.utils import (ACL_FORMAT_FRACTAL_ND, ACL_FORMAT_FRACTAL_NZ,
                                enable_sp, get_ascend_soc_version, is_310p,
                                is_enable_nz, is_moe_model, lmhead_tp_enable)
 from vllm_ascend.worker.npu_input_batch import CachedRequestState, InputBatch
+from vllm.distributed import get_tensor_model_parallel_rank
+from vllm.model_executor.layers.fused_moe.routed_experts_capturer import (
+    RoutedExpertsCapturer
+)
 
 if TYPE_CHECKING:
     import xgrammar as xgr  # type: ignore[import-untyped]
@@ -1460,6 +1464,8 @@ class NPUModelRunner(LoRAModelRunnerMixin):
                     dtype=torch.int64,
                     device=self.device,
                 )
+                if self.model_config.enable_return_routed_experts and kv_cache_group_id == 0:
+                    self.save_save_slot_mapping = slot_mapping.cpu().numpy()
             else:
                 blk_table = self.input_batch.block_table[kv_cache_group_id]
                 blk_table_tensor = blk_table.get_device_tensor()
@@ -1470,6 +1476,9 @@ class NPUModelRunner(LoRAModelRunnerMixin):
                     non_blocking=True,
                 )
                 self.slot_mapping[total_num_scheduled_tokens:].fill_(0)
+
+                if self.model_config.enable_return_routed_experts and kv_cache_group_id == 0:
+                    self.save_save_slot_mapping = self.slot_mapping.cpu().numpy()
 
             # Make AscendCommonAttentionMetadata
             common_attn_metadata = AscendCommonAttentionMetadata(
@@ -1890,6 +1899,12 @@ class NPUModelRunner(LoRAModelRunnerMixin):
         scheduler_output: "SchedulerOutput",
         intermediate_tensors: Optional[IntermediateTensors] = None,
     ) -> Union[ModelRunnerOutput, AsyncModelRunnerOutput, IntermediateTensors]:
+        if self.vllm_config.model_config.enable_return_routed_experts:
+            capturer = RoutedExpertsCapturer.get_instance()
+            if capturer is not None:
+                capturer.clear_buffer()
+            else:
+                logger.error("RoutedExpertsCapturer not initialized.")
         with ProfileExecuteDuration().capture_async("prepare input"):
             self._update_states(scheduler_output)
             if not scheduler_output.total_num_scheduled_tokens:
@@ -2157,6 +2172,13 @@ class NPUModelRunner(LoRAModelRunnerMixin):
                 get_kv_transfer_group().clear_connector_metadata()
 
         extra_args = ({"kv_connector_output": kv_connector_output})
+
+        if self.model_config.enable_return_routed_experts:
+            capturer = RoutedExpertsCapturer.get_instance()
+            if capturer is not None:
+                capturer.save_captured_experts(indices=self.save_save_slot_mapping)
+            else:
+                logger.error("RoutedExpertsCapturer is not initialized.")
 
         model_runner_output = ModelRunnerOutput(
             req_ids=req_ids_output_copy,
@@ -2715,6 +2737,28 @@ class NPUModelRunner(LoRAModelRunnerMixin):
 
         if has_kv_transfer_group():
             get_kv_transfer_group().register_kv_caches(kv_caches)
+
+        if self.model_config.enable_return_routed_experts:
+            self.init_routed_experts_capturer()
+
+    def init_routed_experts_capturer(self):
+        logger.info(
+            "Initializing routed experts capturer, enable_return_routed_experts: %s",
+            self.model_config.enable_return_routed_experts,
+        )
+        routed_experts_capturer = RoutedExpertsCapturer.create()
+        block_size = self.cache_config.block_size
+        self.max_num_kv_tokens = (
+            self.kv_cache_config.num_blocks // len(self.kv_cache_config.kv_cache_groups)
+            + 1
+        ) * block_size
+
+        routed_experts_capturer.init_buffer(
+            max_num_batched_tokens=self.scheduler_config.max_num_batched_tokens,
+            max_num_kv_tokens=self.max_num_kv_tokens,
+            model_config=self.model_config,
+            instance_id=self.vllm_config.instance_id,
+        )
 
     def _align_memory(self, tensor: torch.Tensor,
                       alignment: int) -> torch.Tensor:
