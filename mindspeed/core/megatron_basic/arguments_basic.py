@@ -95,6 +95,9 @@ def transformer_config_init_wrapper(fn):
 
         config_key = inspect.signature(self.__class__).parameters
         for key, value in full_args.items():
+            if key == "enable_routing_replay":
+                self.enable_routing_replay = value
+                continue
             if key in config_key:
                 known_config[key] = value
             else:
