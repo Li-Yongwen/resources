@@ -62,7 +62,8 @@ from verl.workers.rollout.vllm_rollout.utils import (
     get_vllm_max_lora_rank,
 )
 
-_VLLM_VERSION = version.parse(vllm.__version__)
+# _VLLM_VERSION = version.parse(vllm.__version__)
+_VLLM_VERSION = version.parse("0.11.0")
 
 if _VLLM_VERSION > version.parse("0.11.0"):
     from vllm.utils.argparse_utils import FlexibleArgumentParser

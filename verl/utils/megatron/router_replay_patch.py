@@ -265,7 +265,9 @@ def patched_routing(self, logits: torch.Tensor):
             scaling_factor=self.config.moe_router_topk_scaling_factor,
             score_function=self.score_function,
             expert_bias=self.expert_bias,
-            fused=self.config.moe_router_fusion,
+            # fused=self.config.moe_router_fusion,
+            # verl npu目前支持的是megatron 0.12.1, 没有这个参数
+            fused=False,
             router_replay=self.router_replay,
         )
 
@@ -284,7 +286,9 @@ def patched_routing(self, logits: torch.Tensor):
     if self.training and torch.is_grad_enabled() and self.is_aux_loss_enabled():
         # Calculate scores and routing_map for aux loss
         routing_map_for_aux_loss, scores_for_aux_loss = compute_routing_scores_for_aux_loss(
-            logits, self.topk, self.score_function, fused=self.config.moe_router_fusion
+            # logits, self.topk, self.score_function, fused=self.config.moe_router_fusion
+            # verl npu目前支持的是megatron 0.12.1, 没有这个参数
+            logits, self.topk, self.score_function, fused=False
         )
         probs = self._apply_aux_loss(probs, scores_for_aux_loss, routing_map_for_aux_loss)
         probs = self._apply_seq_aux_loss(probs, scores_for_aux_loss, routing_map_for_aux_loss, seq_length, bsz)
