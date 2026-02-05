@@ -35,6 +35,9 @@ from vllm.model_executor.layers.fused_moe.rocm_aiter_fused_moe import (
     is_rocm_aiter_moe_enabled)
 from vllm.model_executor.layers.fused_moe.routing_simulator import (
     RoutingSimulator)
+from vllm.model_executor.layers.fused_moe.routed_experts_capturer import (
+    RoutedExpertsCapturer,
+)
 from vllm.model_executor.layers.quantization.base_config import (
     QuantizationConfig, QuantizeMethodBase)
 from vllm.model_executor.utils import set_weight_attrs
@@ -576,6 +579,18 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
             zero_expert_num=zero_expert_num,
             zero_expert_type=zero_expert_type)
 
+        if (
+            layer.vllm_config.model_config is not None
+            and layer.vllm_config.model_config.enable_return_routed_experts
+        ):
+            # In dummy runs, the capturer is not initialized.
+            capturer = RoutedExpertsCapturer.get_instance()
+            if capturer is not None:  # in dummmy_run may be None
+                capturer.capture(  # noqa
+                    layer_id=layer.layer_id,
+                    topk_ids=topk_ids,
+                )
+
         if self.rocm_aiter_moe_enabled:
             assert self.fused_experts is None
             result = self.rocm_aiter_fused_experts(
@@ -967,6 +982,7 @@ class FusedMoE(CustomOp):
         self.params_dtype = params_dtype
 
         vllm_config = get_current_vllm_config()
+        self.vllm_config = vllm_config
 
         # FIXME (varun): We should have a better way of inferring the activation
         # datatype. This works for now as the tensor datatype entering the MoE
@@ -1174,6 +1190,13 @@ class FusedMoE(CustomOp):
     @property
     def shared_experts(self) -> Optional[torch.nn.Module]:
         return None
+
+    @property
+    def layer_id(self):
+        # Delayed import to avoid circular dependency
+        from vllm.model_executor.models.utils import extract_layer_index
+
+        return extract_layer_index(self.layer_name)
 
     @property
     def tp_size(self):
