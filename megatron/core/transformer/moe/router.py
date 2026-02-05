@@ -437,3 +437,25 @@ class TopKRouter(Router):
         scores, routing_map = self.routing(logits)
 
         return scores, routing_map
+
+    def is_aux_loss_enabled(self) -> bool:
+        """Check if the auxiliary loss is enabled."""
+        for aux_loss_type in ["aux_loss", "seq_aux_loss", "global_aux_loss"]:
+            if self.get_aux_loss_coeff(aux_loss_type) > 0:
+                return True
+        return False
+
+    def get_aux_loss_coeff(self, aux_loss_type: str) -> float:
+        """Return the aux loss coeff for the given auxiliary loss type.
+        If the auxiliary loss type is not found, return 0.0.
+        """
+        if isinstance(self.routing_type, str):
+            if self.routing_type == aux_loss_type:
+                return self.config.moe_aux_loss_coeff
+        if isinstance(self.routing_type, list):
+            try:
+                idx = self.routing_type.index(aux_loss_type)
+                return self.config.moe_aux_loss_coeff[idx]
+            except ValueError:
+                return 0.0
+        return 0.0
